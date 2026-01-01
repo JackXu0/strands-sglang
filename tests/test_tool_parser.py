@@ -16,7 +16,7 @@
 
 import pytest
 
-from strands_sglang.tool_parser import (
+from strands_sglang import (
     UNKNOWN_TOOL_NAME,
     HermesToolCallParser,
     ToolCallParseResult,
