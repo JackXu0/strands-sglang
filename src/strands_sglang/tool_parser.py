@@ -1,17 +1,27 @@
+# Copyright 2025 Horizon RL Contributors
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Tool call parsing for model outputs with strict error handling for RL training.
 
 Different models/tokenizers use different formats for tool calls in their chat templates.
-This module provides parsers that return both successful parses AND errors,
-enabling models to learn from malformed outputs during training.
-
-Currently supported:
-- HermesToolCallParser: <tool_call>{"name": ..., "arguments": {...}}</tool_call>
-  (Used by Qwen, Hermes, and many other instruction-tuned models)
+This module provides parsers that extract tool calls and handle JSON parse errors,
+letting Strands handle schema validation downstream.
 
 Design for RL Training:
-- NO post-processing of model outputs (strict parsing)
-- Native JSON error messages returned directly
-- Parse errors become synthetic tool calls that return error feedback
+- Only handle `JSONDecodeError` (can't extract anything from malformed JSON)
+- Let Strands validate arguments against tool schemas
+- Parse errors become tool calls with error info for model feedback
 """
 
 from __future__ import annotations
@@ -21,10 +31,13 @@ import logging
 import re
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Fallback tool name when we can't identify which tool the model tried to call
+UNKNOWN_TOOL_NAME = "unknown_tool"
 # Regex to extract tool name even from malformed JSON
 _NAME_PATTERN = re.compile(r'"name"\s*:\s*"([^"]+)"')
 
@@ -34,95 +47,61 @@ def _make_tool_call_id() -> str:
     return f"call_{uuid.uuid4().hex[:8]}"
 
 
-# Reserved tool name for parse errors - allows error feedback to flow to model
-PARSE_ERROR_TOOL_NAME = "__tool_call_parse_error__"
-
-
-@dataclass
-class ToolCall:
-    """A successfully parsed tool call."""
+@dataclass(frozen=True, slots=True)
+class ToolCallParseResult:
+    """A parsed tool call request."""
 
     id: str
     name: str
-    input: dict
-
-
-@dataclass
-class ToolCallError:
-    """A failed tool call parse attempt with detailed error info."""
-
-    id: str
-    raw_content: str
-    error_message: str
-    attempted_name: str | None = None  # Name if we could extract it before failure
-
-
-@dataclass
-class ParseResult:
-    """Result of parsing tool calls from model output.
-
-    For RL training, both successful parses and errors are returned so that:
-    - Successful tool calls are executed normally
-    - Parse errors become visible to the model as error feedback
-    """
-
-    tool_calls: list[ToolCall]
-    errors: list[ToolCallError]
+    input: dict[str, Any] = field(default_factory=dict)
+    raw: str | None = None
 
     @property
-    def has_errors(self) -> bool:
-        """Check if there were any parse errors."""
-        return len(self.errors) > 0
-
-    @property
-    def has_tool_calls(self) -> bool:
-        """Check if any tool calls were attempted (successful or not)."""
-        return len(self.tool_calls) > 0 or len(self.errors) > 0
+    def is_error(self) -> bool:
+        """Check if this represents a parse error."""
+        return self.raw is not None
 
 
 class ToolCallParser(ABC):
     """Base class for tool call parsers.
 
-    Subclasses should implement the `parse` method to extract tool calls
-    from model output text with strict validation and detailed error reporting.
+    Subclasses implement `parse` to extract tool calls from model output.
+    Only JSONDecodeError is handled; Strands validates arguments downstream.
 
     Example:
         >>> parser = HermesToolCallParser()
-        >>> result = parser.parse('<tool_call>{"name": "foo", "arguments": {}}</tool_call>')
-        >>> print(result.tool_calls[0].name)
+        >>> results = parser.parse('<tool_call>{"name": "foo", "arguments": {}}</tool_call>')
+        >>> print(results[0].name)
         foo
     """
 
     @abstractmethod
-    def parse(self, text: str) -> ParseResult:
+    def parse(self, text: str) -> list[ToolCallParseResult]:
         """Parse tool calls from model output text.
 
         Args:
             text: Model output text.
 
         Returns:
-            ParseResult containing successful tool calls and any parse errors.
+            List of parsed tool call results.
         """
         ...
 
-    def __call__(self, text: str) -> list[dict]:
+    def __call__(self, text: str) -> list[dict[str, Any]]:
         """Parse tool calls (callable interface for backwards compatibility).
-
-        Note: This returns only successful parses. For RL training,
-        use parse() directly to also get errors.
 
         Args:
             text: Model output text.
 
         Returns:
-            List of parsed tool calls as dicts.
+            List of successful tool calls as dicts.
         """
-        result = self.parse(text)
-        return [{"id": tc.id, "name": tc.name, "input": tc.input} for tc in result.tool_calls]
+        results = self.parse(text)
+        return [{"id": tc.id, "name": tc.name, "input": tc.input} for tc in results if not tc.is_error]
 
 
 class HermesToolCallParser(ToolCallParser):
-    """Parser for Hermes/Qwen XML tool call format with strict validation.
+    """Parser for Hermes/Qwen XML tool call format.
 
     Format: <tool_call>{"name": "func", "arguments": {"arg": value}}</tool_call>
 
@@ -131,114 +110,96 @@ class HermesToolCallParser(ToolCallParser):
     - NousResearch/Hermes models
     - Models using similar XML-wrapped JSON tool call format
 
-    This parser is STRICT for RL training:
-    - No post-processing or fixing of malformed JSON
-    - Native JSON error messages returned directly
-    - Parse errors are returned alongside successful parses
+    Only handles JSONDecodeError; Strands validates arguments against tool schemas.
+
+    Attributes:
+        bot_token: Opening tag for tool calls (default: "<tool_call>").
+        eot_token: Closing tag for tool calls (default: "</tool_call>").
     """
 
-    BOT_TOKEN = "<tool_call>"
-    EOT_TOKEN = "</tool_call>"
+    DEFAULT_BOT_TOKEN = "<tool_call>"
+    DEFAULT_EOT_TOKEN = "</tool_call>"
 
-    _PATTERN = re.compile(
-        rf"{re.escape(BOT_TOKEN)}\s*(.*?)\s*{re.escape(EOT_TOKEN)}",
-        re.DOTALL,
-    )
+    def __init__(
+        self,
+        bot_token: str | None = None,
+        eot_token: str | None = None,
+    ) -> None:
+        """Initialize the parser with optional custom tokens.
 
-    def parse(self, text: str) -> ParseResult:
-        """Parse tool calls with strict validation.
+        Args:
+            bot_token: Custom opening tag (default: "<tool_call>").
+            eot_token: Custom closing tag (default: "</tool_call>").
+        """
+        self.bot_token = bot_token or self.DEFAULT_BOT_TOKEN
+        self.eot_token = eot_token or self.DEFAULT_EOT_TOKEN
+        self._pattern = re.compile(
+            rf"{re.escape(self.bot_token)}\s*(.*?)\s*{re.escape(self.eot_token)}",
+            re.DOTALL,
+        )
+
+    def parse(self, text: str) -> list[ToolCallParseResult]:
+        """Parse tool calls from model output.
 
         Args:
             text: Model output text.
 
         Returns:
-            ParseResult with successful tool calls and detailed errors.
+            List of tool call results (successful and errors).
         """
-        tool_calls: list[ToolCall] = []
-        errors: list[ToolCallError] = []
+        tool_calls: list[ToolCallParseResult] = []
 
-        for match in self._PATTERN.finditer(text):
+        for match in self._pattern.finditer(text):
             raw_content = match.group(1).strip()
             tool_call_id = _make_tool_call_id()
 
-            # Attempt strict JSON parse - NO fixing or post-processing
+            # Only handle JSONDecodeError - let Strands validate the rest
             try:
                 call_json = json.loads(raw_content)
             except json.JSONDecodeError as e:
-                # Try to extract tool name with regex even if JSON is malformed
-                name_match = _NAME_PATTERN.search(raw_content)
-                attempted_name = name_match.group(1) if name_match else None
-
-                error_msg = f"JSON parse error: {e}"
-                errors.append(
-                    ToolCallError(
-                        id=tool_call_id,
-                        raw_content=raw_content,
-                        error_message=error_msg,
-                        attempted_name=attempted_name,
-                    )
-                )
-                logger.warning("Tool call parse error: %s", error_msg)
+                tool_calls.append(self._make_error_tool_call(raw_content, tool_call_id, e))
                 continue
 
-            # Validate required fields
-            if not isinstance(call_json, dict):
-                errors.append(
-                    ToolCallError(
-                        id=tool_call_id,
-                        raw_content=raw_content,
-                        error_message="Tool call must be a JSON object, not " + type(call_json).__name__,
-                        attempted_name=None,
-                    )
-                )
+            # Extract name and arguments - be lenient, let Strands validate
+            if isinstance(call_json, dict):
+                name = call_json.get("name")
+                arguments = call_json.get("arguments", {})
+            else:
+                name = None
+                arguments = {}
+
+            # Need a string name to yield toolUse event
+            if not name or not isinstance(name, str):
+                tool_calls.append(self._make_error_tool_call(raw_content, tool_call_id, ValueError("missing name")))
                 continue
 
-            name = call_json.get("name")
-            if not name:
-                errors.append(
-                    ToolCallError(
-                        id=tool_call_id,
-                        raw_content=raw_content,
-                        error_message=(
-                            "Tool call missing required field 'name'. "
-                            "Expected format: {\"name\": \"tool_name\", \"arguments\": {...}}"
-                        ),
-                        attempted_name=None,
-                    )
-                )
-                continue
-
-            if not isinstance(name, str):
-                errors.append(
-                    ToolCallError(
-                        id=tool_call_id,
-                        raw_content=raw_content,
-                        error_message=f"Tool call 'name' must be a string, got {type(name).__name__}",
-                        attempted_name=str(name) if name else None,
-                    )
-                )
-                continue
-
-            # Extract arguments (optional, defaults to empty dict)
-            arguments = call_json.get("arguments", {})
-            if not isinstance(arguments, dict):
-                errors.append(
-                    ToolCallError(
-                        id=tool_call_id,
-                        raw_content=raw_content,
-                        error_message=f"Tool call 'arguments' must be an object, got {type(arguments).__name__}",
-                        attempted_name=name,
-                    )
-                )
-                continue
-
-            # Success!
+            # Pass arguments as-is - Strands validates against tool schema
             tool_calls.append(
-                ToolCall(
+                ToolCallParseResult(
                     id=tool_call_id,
                     name=name,
-                    input=arguments,
+                    input=arguments if isinstance(arguments, dict) else {},
                 )
             )
 
-        return ParseResult(tool_calls=tool_calls, errors=errors)
+        return tool_calls
+
+    def _make_error_tool_call(
+        self,
+        raw_content: str,
+        tool_call_id: str,
+        error: Exception,
+    ) -> ToolCallParseResult:
+        """Create an error tool call for parse failures."""
+        # Try to extract tool name even from malformed JSON
+        name_match = _NAME_PATTERN.search(raw_content)
+        name = name_match.group(1) if name_match else UNKNOWN_TOOL_NAME
+
+        logger.warning("Tool call parse error: %s", error)
+
+        return ToolCallParseResult(
+            id=tool_call_id,
+            name=name,
+            input={},
+            raw=raw_content,
+        )
