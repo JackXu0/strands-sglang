@@ -38,8 +38,6 @@ logger = logging.getLogger(__name__)
 
 # Fallback tool name when we can't identify which tool the model tried to call
 UNKNOWN_TOOL_NAME = "unknown_tool"
-# Regex to extract tool name even from malformed JSON
-_NAME_PATTERN = re.compile(r'"name"\s*:\s*"([^"]+)"')
 
 
 def _make_tool_call_id() -> str:
@@ -102,6 +100,21 @@ class ToolCallParser(ABC):
         """
         ...
 
+    @abstractmethod
+    def strip_markup(self, text: str) -> str:
+        """Strip tool call markup from text.
+
+        Used to remove raw markup when structured tool_calls are available,
+        avoiding duplication in chat templates.
+
+        Args:
+            text: Text potentially containing tool call markup.
+
+        Returns:
+            Text with tool call markup removed.
+        """
+        ...
+
     def __call__(self, text: str) -> list[dict[str, Any]]:
         """Parse tool calls (callable interface for backwards compatibility).
 
@@ -132,8 +145,9 @@ class HermesToolCallParser(ToolCallParser):
         eot_token: Closing tag for tool calls (default: "</tool_call>").
     """
 
-    DEFAULT_BOT_TOKEN = "<tool_call>"
-    DEFAULT_EOT_TOKEN = "</tool_call>"
+    DEFAULT_BOT_TOKEN = "<tool_call>"  # tool call start tag
+    DEFAULT_EOT_TOKEN = "</tool_call>"  # tool call end tag
+    _NAME_PATTERN = re.compile(r'"name"\s*:\s*"([^"]+)"')  # tool call name regex
 
     def __init__(
         self,
@@ -152,6 +166,22 @@ class HermesToolCallParser(ToolCallParser):
             rf"{re.escape(self.bot_token)}\s*(.*?)\s*{re.escape(self.eot_token)}",
             re.DOTALL,
         )
+        # Pattern for stripping (includes trailing whitespace)
+        self._strip_pattern = re.compile(
+            rf"{re.escape(self.bot_token)}.*?{re.escape(self.eot_token)}\s*",
+            re.DOTALL,
+        )
+
+    def strip_markup(self, text: str) -> str:
+        """Strip tool call markup from text.
+
+        Args:
+            text: Text potentially containing tool call markup.
+
+        Returns:
+            Text with tool call markup removed.
+        """
+        return self._strip_pattern.sub("", text).strip()
 
     def parse(self, text: str) -> list[ToolCallParseResult]:
         """Parse tool calls from model output.
@@ -207,7 +237,7 @@ class HermesToolCallParser(ToolCallParser):
     ) -> ToolCallParseResult:
         """Create an error tool call for parse failures."""
         # Try to extract tool name even from malformed JSON
-        name_match = _NAME_PATTERN.search(raw_content)
+        name_match = self._NAME_PATTERN.search(raw_content)
         name = name_match.group(1) if name_match else UNKNOWN_TOOL_NAME
 
         logger.warning(f"Tool call parse error: {error}")
