@@ -67,6 +67,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: tests that require a running SGLang server"]
 
 [tool.ruff]
 line-length = 120
