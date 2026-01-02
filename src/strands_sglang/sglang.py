@@ -110,13 +110,8 @@ class SGLangModel(Model):
 
         # Setup HTTP client
         base_url = str(model_config.get("base_url") or "http://localhost:8000").rstrip("/")
-        timeout = model_config.get("timeout")
-        timeout_obj = (
-            httpx.Timeout(connect=timeout[0], read=timeout[1])
-            if isinstance(timeout, tuple)
-            else httpx.Timeout(timeout or 300.0)
-        )
-        self.client = httpx.AsyncClient(base_url=base_url, timeout=timeout_obj)
+        timeout = model_config.get("timeout") or 300.0
+        self.client = httpx.AsyncClient(base_url=base_url, timeout=httpx.Timeout(timeout))
 
         # Store config
         self.config = dict(model_config)
