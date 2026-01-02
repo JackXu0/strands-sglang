@@ -266,7 +266,8 @@ class SGLangModel(Model):
         """Tokenize prompt messages for the next generation call.
 
         First call: tokenizes full prompt with system prompt and tools.
-        Subsequent calls: tokenizes only new messages (tool results, user messages).
+        Subsequent calls: tokenizes only new messages (tool results, user messages),
+        prepending the message separator to align with chat template formatting.
         """
         # First call: full prompt with tools
         if len(self.token_manager) == 0:
@@ -277,6 +278,13 @@ class SGLangModel(Model):
         if len(messages) > self._processed_message_count:
             new_messages = messages[self._processed_message_count :]
             formatted = self.format_prompt(new_messages)
+
+            # Prepend message separator to align with chat template.
+            # The model generates up to <|im_end|>, but the chat template adds
+            # a separator (e.g., "\n") before the next <|im_start|>.
+            if self.tool_call_parser:
+                formatted = self.tool_call_parser.message_separator + formatted
+
             return self.tokenizer.encode(formatted, add_special_tokens=False)
 
         return None
