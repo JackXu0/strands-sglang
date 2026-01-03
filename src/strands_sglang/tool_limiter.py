@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Strands hook for limiting iterations within a single agent invocation.
+"""Strands hook for limiting tool iterations within a single agent invocation.
 
-An "iteration" is one model response that requests tools, followed by tool execution.
+A "tool iteration" is one model response that requests tools, followed by tool execution.
 This limiter stops the agent loop cleanly after N complete iterations.
 """
 
@@ -26,7 +26,7 @@ from strands.hooks.events import MessageAddedEvent
 logger = logging.getLogger(__name__)
 
 
-class MaxIterationsReachedError(Exception):
+class MaxToolIterationsReachedError(Exception):
     """Raised when `max_iterations` limit is reached.
 
     This exception is raised after a complete iteration (model response + tool execution),
@@ -36,7 +36,7 @@ class MaxIterationsReachedError(Exception):
     pass
 
 
-class IterationLimiter(HookProvider):
+class ToolIterationLimiter(HookProvider):
     """Hook to enforce `max_iterations` limit on agent tool loops.
 
     An "iteration" is one cycle of: model generates tool call → tool executes → result returned.
@@ -46,11 +46,11 @@ class IterationLimiter(HookProvider):
     ensuring a clean trajectory without requiring token truncation.
 
     Example:
-        >>> limiter = IterationLimiter(max_iterations=5)
+        >>> limiter = ToolIterationLimiter(max_iterations=5)
         >>> agent = Agent(model=model, tools=[...], hooks=[limiter])
         >>> try:
         ...     result = agent.invoke("solve this problem")
-        ... except MaxIterationsReachedError:
+        ... except MaxToolIterationsReachedError:
         ...     # Trajectory is clean - contains exactly 5 complete iterations
         ...     print(f"Stopped after {limiter.iteration_count} iterations")
     """
@@ -99,6 +99,6 @@ class IterationLimiter(HookProvider):
             if any(c.get("toolResult") for c in content):
                 if self.iteration_count >= self.max_iterations:
                     logger.debug(f"Max iterations ({self.max_iterations}) reached, stopping")
-                    raise MaxIterationsReachedError(
+                    raise MaxToolIterationsReachedError(
                         f"Max iterations ({self.max_iterations}) reached"
                     )
