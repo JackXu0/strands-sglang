@@ -58,6 +58,7 @@ def model(tokenizer, sglang_base_url, sglang_model_id):
         tool_call_parser=HermesToolCallParser(),
         base_url=sglang_base_url,
         model_id=sglang_model_id,
+        params={"max_new_tokens": 16384},
     )
 
 
