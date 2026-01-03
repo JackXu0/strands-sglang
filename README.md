@@ -159,6 +159,15 @@ export SGLANG_MODEL_ID=Qwen/Qwen3-4B-Thinking-2507
 pytest tests/integration/ -v
 ```
 
+## Contributing
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
+Now `git commit` will auto-run linting and formatting checks.
+
 ## License
 
 Apache 2.0
