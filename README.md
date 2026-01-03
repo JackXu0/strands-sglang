@@ -5,10 +5,9 @@ SGLang model provider for [Strands Agents SDK](https://github.com/strands-agents
 ## Features
 
 - **SGLang Native API**: Uses SGLang's native `/generate` endpoint for efficient token-level generation
-- **TITO Support**: Tracks complete token trajectories with logprobs for RL training - no retokenization drift
+- **TITO Support**: Tracks complete token trajectories with logprobs for RL training - no retokenization drift (see [examples/retokenization_drift/](examples/retokenization_drift/))
 - **Tool Call Parsing**: Customizable tool parsing aligned with model chat templates (Hermes/Qwen format)
 - **Iteration Limiting**: Built-in hook to limit tool iterations with clean trajectory truncation
-- **Multi-turn Support**: Incremental tokenization preserves thinking tokens across conversation turns
 
 ## Requirements
 
