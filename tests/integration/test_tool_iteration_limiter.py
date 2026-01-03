@@ -194,11 +194,11 @@ class TestToolIterationLimiterTrajectory:
         assert len(segment_info) >= 2  # At least 1 prompt + 1 response
 
         # All arrays should have same length (consistency check)
-        assert len(token_manager.token_ids) == len(token_manager.output_mask)
+        assert len(token_manager.token_ids) == len(token_manager.loss_mask)
         assert len(token_manager.token_ids) == len(token_manager.logprobs)
 
         # Should have some output tokens (model responses)
-        output_count = sum(1 for mask in token_manager.output_mask if mask)
+        output_count = sum(1 for mask in token_manager.loss_mask if mask)
         assert output_count > 0
 
     async def test_response_segments_match_iterations(self, fresh_model):

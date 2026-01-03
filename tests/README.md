@@ -148,7 +148,7 @@ Access trajectory data directly from `token_manager`:
 ```python
 # After generation:
 token_ids = model.token_manager.token_ids      # All tokens
-output_mask = model.token_manager.output_mask  # True = model output (for loss)
+loss_mask = model.token_manager.loss_mask      # True = model output (for loss)
 logprobs = model.token_manager.logprobs        # Log probabilities
 segment_info = model.token_manager.segment_info  # [(is_output, length), ...]
 ```

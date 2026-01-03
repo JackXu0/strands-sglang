@@ -213,11 +213,11 @@ class TestAgentBasic:
         # Check TITO structure
         assert len(model.token_manager.segments) >= 2
         assert len(model.token_manager.token_ids) > 0
-        assert len(model.token_manager.output_mask) == len(model.token_manager.token_ids)
+        assert len(model.token_manager.loss_mask) == len(model.token_manager.token_ids)
 
         # Should have both prompt (False) and response (True) masks
-        assert not all(model.token_manager.output_mask)
-        assert any(model.token_manager.output_mask)
+        assert not all(model.token_manager.loss_mask)
+        assert any(model.token_manager.loss_mask)
 
 
 # =============================================================================
@@ -458,8 +458,8 @@ class TestMultiTurnConsistency:
         assert len(decoded_after_turn2) > len(decoded_after_turn1), \
             "Trajectory should grow"
 
-    async def test_output_mask_consistency_across_turns(self, model, tokenizer):
-        """Output mask remains consistent across turns."""
+    async def test_loss_mask_consistency_across_turns(self, model, tokenizer):
+        """Loss mask remains consistent across turns."""
         model.reset()
 
         agent = Agent(
@@ -469,11 +469,11 @@ class TestMultiTurnConsistency:
         )
 
         await agent.invoke_async("5+5=?")
-        mask_after_turn1 = model.token_manager.output_mask.copy()
+        mask_after_turn1 = model.token_manager.loss_mask.copy()
         tokens_after_turn1 = len(model.token_manager)
 
         await agent.invoke_async("6+6=?")
-        mask_after_turn2 = model.token_manager.output_mask
+        mask_after_turn2 = model.token_manager.loss_mask
 
         # First N tokens should have same mask as before
         assert mask_after_turn2[:tokens_after_turn1] == mask_after_turn1, \

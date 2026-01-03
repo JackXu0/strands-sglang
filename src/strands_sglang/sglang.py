@@ -79,7 +79,7 @@ class SGLangModel(Model):
         >>> model = SGLangModel(tokenizer=tokenizer, base_url="http://localhost:8000")
         >>> # After generation:
         >>> model.token_manager.token_ids    # Full token trajectory
-        >>> model.token_manager.output_mask  # Boolean mask for loss computation
+        >>> model.token_manager.loss_mask    # Boolean mask for loss computation
         >>> model.token_manager.logprobs     # Log probabilities
     """
 

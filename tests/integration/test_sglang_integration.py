@@ -163,7 +163,7 @@ class TestTITO:
 
         assert total_tokens == segment_sum
         assert total_tokens == len(model.token_manager.token_ids)
-        assert total_tokens == len(model.token_manager.output_mask)
+        assert total_tokens == len(model.token_manager.loss_mask)
         assert total_tokens == len(model.token_manager.logprobs)
 
     async def test_incremental_tokenization(self, model):

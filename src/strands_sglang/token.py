@@ -15,12 +15,12 @@
 """Token management for TITO (Token-In/Token-Out) training.
 
 This module provides:
-- Token: A single token with ID, logprob, and output mask
+- Token: A single token with ID, logprob, and loss mask
 - TokenManager: Manages segment-based token accumulation
 
 For RL training, you typically want:
 - token_ids: Flat list of all tokens for the trajectory
-- output_mask: Boolean mask for loss computation (True = model output)
+- loss_mask: Boolean mask for loss computation (True = model output)
 - logprobs: Log probabilities for policy gradient
 """
 
@@ -60,7 +60,7 @@ class TokenManager:
         >>> manager.add_prompt([1, 2, 3])
         >>> manager.add_response([4, 5], [0.1, 0.2])
         >>> manager.token_ids      # [1, 2, 3, 4, 5]
-        >>> manager.output_mask    # [False, False, False, True, True]
+        >>> manager.loss_mask      # [False, False, False, True, True]
         >>> manager.logprobs       # [None, None, None, 0.1, 0.2]
     """
 
