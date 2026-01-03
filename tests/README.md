@@ -84,7 +84,7 @@ pytest tests/integration/ \
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SGLANG_BASE_URL` | `http://localhost:8000` | SGLang server URL |
-| `SGLANG_MODEL_ID` | `Qwen/Qwen3-4B-Thinking-2507` | Model ID |
+| `SGLANG_MODEL_ID` | `Qwen/Qwen3-4B-Instruct-2507` | Model ID |
 
 ```bash
 SGLANG_BASE_URL=http://my-server:8000 pytest tests/integration/
