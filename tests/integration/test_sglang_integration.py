@@ -12,65 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests for SGLangModel (requires running SGLang server).
+"""Integration tests for SGLangModel API.
 
-Run with: pytest tests/test_sglang_integration.py -v
-Skip with: pytest tests/ --ignore=tests/test_sglang_integration.py
-
-These tests require a running SGLang server. Configure via environment:
-    SGLANG_BASE_URL: Server URL (default: http://localhost:8000)
-    SGLANG_MODEL_ID: Model ID for Qwen3 (default: Qwen/Qwen3-4B-Instruct-2507)
+Tests low-level SGLangModel streaming and TITO functionality.
+Fixtures (model, tokenizer, calculator_tool) are provided by conftest.py.
 """
-
-import os
-
-import pytest
-from transformers import AutoTokenizer
-
-from strands_sglang import SGLangModel
-from strands_sglang.tool_parser import HermesToolCallParser
-
-# Configuration from environment
-BASE_URL = os.environ.get("SGLANG_BASE_URL", "http://localhost:8000")
-MODEL_ID = os.environ.get("SGLANG_MODEL_ID", "Qwen/Qwen3-4B-Instruct-2507")
-
-pytestmark = pytest.mark.integration
-
-
-@pytest.fixture(scope="module")
-def tokenizer():
-    """Load Qwen3 tokenizer."""
-    return AutoTokenizer.from_pretrained(MODEL_ID)
-
-
-@pytest.fixture(scope="module")
-def model(tokenizer):
-    """Create SGLangModel connected to running server."""
-    return SGLangModel(
-        tokenizer=tokenizer,
-        tool_call_parser=HermesToolCallParser(),
-        base_url=BASE_URL,
-        model_id=MODEL_ID,
-    )
-
-
-@pytest.fixture
-def calculator_tool():
-    """Sample calculator tool spec."""
-    return {
-        "name": "calculator",
-        "description": "Perform arithmetic calculations",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "expression": {
-                    "type": "string",
-                    "description": "The arithmetic expression to evaluate",
-                }
-            },
-            "required": ["expression"],
-        },
-    }
 
 
 class TestStreamBasic:

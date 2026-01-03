@@ -17,28 +17,17 @@
 Tests the full Agent pipeline with SGLangModel using problems from the
 HuggingFace MATH-500 dataset (https://huggingface.co/datasets/HuggingFaceH4/MATH-500).
 
-Run with: pytest tests/test_agent_math500.py -v
-Requires: Running SGLang server and strands_tools installed.
-
-Configure via environment:
-    SGLANG_BASE_URL: Server URL (default: http://localhost:8000)
-    SGLANG_MODEL_ID: Model ID (default: Qwen/Qwen3-4B-Instruct-2507)
+Fixtures (tokenizer, model base) are provided by conftest.py.
+This module defines additional fixtures specific to MATH-500 tests.
 """
-
-import os
 
 import pytest
 from strands import Agent
 from strands.types.exceptions import MaxTokensReachedException
 from strands_tools import calculator
-from transformers import AutoTokenizer
 
 from strands_sglang import SGLangModel
 from strands_sglang.tool_parser import HermesToolCallParser
-
-# Configuration
-BASE_URL = os.environ.get("SGLANG_BASE_URL", "http://localhost:8000")
-MODEL_ID = os.environ.get("SGLANG_MODEL_ID", "Qwen/Qwen3-4B-Instruct-2507")
 
 SYSTEM_PROMPT = """You are a math tutor. Always use the calculator tool to solve problems.
 
@@ -49,8 +38,6 @@ The calculator tool supports these modes:
 - integrate: Compute integrals (use wrt="x")
 
 Show your work and use the calculator for all computations."""
-
-pytestmark = pytest.mark.integration
 
 
 # =============================================================================
@@ -155,24 +142,21 @@ MATH500_PROBLEMS = [
 
 
 # =============================================================================
-# Fixtures
+# Fixtures (tokenizer is provided by conftest.py)
 # =============================================================================
 
 
 @pytest.fixture(scope="module")
-def tokenizer():
-    """Load tokenizer."""
-    return AutoTokenizer.from_pretrained(MODEL_ID)
+def model(tokenizer, sglang_base_url, sglang_model_id):
+    """Create SGLangModel with appropriate token limits for MATH-500 tests.
 
-
-@pytest.fixture(scope="module")
-def model(tokenizer):
-    """Create SGLangModel with appropriate token limits."""
+    Overrides the base model fixture to add max_new_tokens limit.
+    """
     return SGLangModel(
         tokenizer=tokenizer,
         tool_call_parser=HermesToolCallParser(),
-        base_url=BASE_URL,
-        model_id=MODEL_ID,
+        base_url=sglang_base_url,
+        model_id=sglang_model_id,
         params={"max_new_tokens": 1024},  # Limit response length
     )
 
