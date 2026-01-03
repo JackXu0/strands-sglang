@@ -165,7 +165,8 @@ class SGLangModel(Model):
     def _format_message_content(self, message: dict[str, Any]) -> None:
         """Format a single message's content for chat templates.
 
-        Flattens content arrays and strips tool call markup when needed.
+        Flattens content arrays and preserves raw content including tool call
+        markup to maintain exact generation order for TITO reconstruction.
         Modifies the message in-place.
         """
         # Flatten content from [{"type": "text", "text": "..."}] to "..."
@@ -175,9 +176,9 @@ class SGLangModel(Model):
             else:
                 message["content"] = ""
 
-        # When tool_calls exist, strip markup from content to avoid duplication.
-        if message.get("tool_calls") and message.get("content"):
-            message["content"] = self.tool_call_parser.strip_markup(message["content"])
+        # Remove strands-processed tool_calls field and let the chat template handle it.
+        if "tool_calls" in message:
+            del message["tool_calls"]
 
     def format_request_messages(self, messages: Messages, system_prompt: str | None = None) -> list[dict[str, Any]]:
         """Convert strands Messages to OpenAI format for chat templates.
