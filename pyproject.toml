@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "strands-sglang"
 version = "0.0.1"
-description = "Supporting SGLang's native API with Token-in Token-out (TITO) in Strands Agents SDK for agentic RL training"
+description = "SGLang model provider for Strands Agents SDK with Token-In/Token-Out (TITO) support for agentic RL training."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
