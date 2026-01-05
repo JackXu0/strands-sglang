@@ -27,9 +27,7 @@ throughout the rollout instead of converting text back to tokens.
 
 from __future__ import annotations
 
-import json
 import logging
-from contextlib import asynccontextmanager
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -54,6 +52,7 @@ from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolChoice, ToolSpec
 from typing_extensions import Unpack, override
 
+from .client import SGLangClient
 from .token import TokenManager
 from .tool_parser import HermesToolCallParser, ToolCallParser, ToolCallParseResult
 
@@ -77,7 +76,7 @@ class SGLangModel(Model):
     Example:
         >>> from transformers import AutoTokenizer
         >>> tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507")
-        >>> model = SGLangModel(tokenizer=tokenizer, base_url="http://localhost:8000")
+        >>> model = SGLangModel(tokenizer=tokenizer, base_url="http://localhost:30000")
         >>> # After generation:
         >>> model.token_manager.token_ids    # Full token trajectory
         >>> model.token_manager.loss_mask    # Boolean mask for loss computation
@@ -87,17 +86,17 @@ class SGLangModel(Model):
     class SGLangConfig(TypedDict, total=False):
         """Configuration options for SGLang native API."""
 
-        base_url: str  # SGLang server URL (default: http://localhost:8000)
+        base_url: str  # SGLang server URL (default: http://localhost:30000)
         model_id: str | None  # Optional model identifier
         params: dict[str, Any] | None  # Default sampling parameters
-        timeout: float | None  # Request timeout in seconds (default: 600s like OpenAI)
+        timeout: float | None  # Request timeout in seconds, or None for infinite (default: None, like SLIME)
         return_logprobs: bool  # Return logprobs for all tokens (default: True)
 
     def __init__(
         self,
         tokenizer: PreTrainedTokenizerBase,
         tool_call_parser: ToolCallParser | None = None,
-        client: httpx.AsyncClient | None = None,
+        client: SGLangClient | None = None,
         **model_config: Unpack[SGLangConfig],
     ) -> None:
         """Initialize SGLang model provider.
@@ -105,23 +104,20 @@ class SGLangModel(Model):
         Args:
             tokenizer: HuggingFace tokenizer for chat template and tokenization.
             tool_call_parser: Parser for tool calls (default: HermesToolCallParser).
-            client: Optional shared httpx.AsyncClient for connection pooling.
-                    If provided, it will be reused across requests (efficient for
-                    high-concurrency training within a single event loop).
-                    If None, a new client is created per request.
+            client: Optional SGLangClient for connection pooling and retry logic.
+                    If None, creates a new client per-request (not recommended for high concurrency).
             **model_config: See SGLangConfig for available options.
         """
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser or HermesToolCallParser()
 
         # HTTP client setup
-        base_url = str(model_config.get("base_url") or "http://localhost:8000").rstrip("/")
-        timeout = model_config.get("timeout") or 600.0  # Default 10min like OpenAI
-        self._client_config = {
-            "base_url": base_url,
-            "timeout": httpx.Timeout(timeout, connect=5.0),
-        }
-        self._shared_client = client  # None = create per-request
+        base_url = str(model_config.get("base_url") or "http://localhost:30000").rstrip("/")
+        timeout = model_config.get("timeout")  # None = infinite, like SLIME
+
+        self._client = client
+        self._base_url = base_url
+        self._timeout = timeout
 
         # Store config
         self.config = dict(model_config)
@@ -134,14 +130,12 @@ class SGLangModel(Model):
 
         logger.debug(f"initialized with config: {self.config}")
 
-    @asynccontextmanager
-    async def _get_client(self) -> AsyncGenerator[httpx.AsyncClient, None]:
-        """Get HTTP client - shared if provided, otherwise create per-request."""
-        if self._shared_client is not None:
-            yield self._shared_client
-        else:
-            async with httpx.AsyncClient(**self._client_config) as client:
-                yield client
+    def _get_client(self) -> SGLangClient:
+        """Get SGLangClient - shared if provided, otherwise create new."""
+        if self._client is not None:
+            return self._client
+        # Create per-request client (not ideal for high concurrency)
+        return SGLangClient(self._base_url, timeout=self._timeout)
 
     def reset(self) -> None:
         """Reset token accumulation for a new episode.
@@ -250,34 +244,6 @@ class SGLangModel(Model):
     # Generation
     # -------------------------------------------------------------------------
 
-    def build_sglang_payload(
-        self,
-        *,
-        input_ids: list[int],
-        sampling_params: dict[str, Any] | None = None,
-        stream: bool = True,
-        return_logprob: bool = True,
-    ) -> dict[str, Any]:
-        """Build request payload for SGLang native `/generate` endpoint."""
-
-        payload: dict[str, Any] = {
-            "input_ids": input_ids,
-            "stream": stream,
-        }
-
-        model_id = self.get_config().get("model_id")
-        if model_id:
-            payload["model"] = model_id
-
-        if sampling_params:
-            payload["sampling_params"] = sampling_params
-
-        if return_logprob:
-            payload["return_logprob"] = True
-            payload["logprob_start_len"] = 0
-
-        return payload
-
     def tokenize_prompt_messages(
         self,
         messages: Messages,
@@ -308,25 +274,6 @@ class SGLangModel(Model):
             return self.tokenizer.encode(formatted, add_special_tokens=False)
 
         return None
-
-    async def _iter_sse_events(self, response: httpx.Response) -> AsyncGenerator[dict[str, Any], None]:
-        """Parse SSE (Server-Sent Events) from SGLang streaming response.
-
-        SSE format: lines starting with "data:" contain JSON payloads.
-        Stream ends with "data: [DONE]".
-        """
-        async for line in response.aiter_lines():
-            if not line or not line.startswith("data:"):
-                continue
-
-            data = line[5:].strip()  # len("data:") = 5
-            if data == "[DONE]":
-                break
-
-            try:
-                yield json.loads(data)
-            except json.JSONDecodeError:
-                continue
 
     def _yield_tool_use_events(
         self,
@@ -400,58 +347,53 @@ class SGLangModel(Model):
         new_input_tokens = self.tokenize_prompt_messages(messages, system_prompt)
         # Tracking token IDs in token_manager to ensure the token-in feature
         input_ids = self.token_manager.token_ids + (new_input_tokens or [])
-        payload = self.build_sglang_payload(
-            input_ids=input_ids,
-            sampling_params=sampling_params,
-            return_logprob=return_logprobs,
-        )
 
         # Start message
         yield {"messageStart": {"role": "assistant"}}
         yield {"contentBlockStart": {"start": {}}}
 
-        # Stream response
+        # Stream response via SGLangClient
         prev_text = ""
         last_output_ids: list[int] = []
         last_output_logprobs: list[float] | None = None
         last_input_logprobs: list[float] | None = None
         last_meta: dict[str, Any] | None = None
 
+        client = self._get_client()
+        ephemeral_client = self._client is None  # Ephemeral clients are closed after use
+
         try:
-            async with self._get_client() as client:
-                async with client.stream("POST", "/generate", json=payload) as resp:
-                    resp.raise_for_status()
+            async for event in client.generate(
+                input_ids=input_ids,
+                model=config.get("model_id"),
+                sampling_params=sampling_params,
+                return_logprob=return_logprobs,
+            ):
+                new_text = event.get("text")
+                if isinstance(new_text, str):
+                    delta = new_text[len(prev_text) :] if new_text.startswith(prev_text) else new_text
+                    prev_text = new_text
+                    if delta:
+                        yield {"contentBlockDelta": {"delta": {"text": delta}}}
 
-                    async for event in self._iter_sse_events(resp):
-                        new_text = event.get("text")
-                        if isinstance(new_text, str):
-                            delta = new_text[len(prev_text) :] if new_text.startswith(prev_text) else new_text
-                            prev_text = new_text
-                            if delta:
-                                yield {"contentBlockDelta": {"delta": {"text": delta}}}
-
-                        last_output_ids = event.get("output_ids") or last_output_ids
-                        last_output_logprobs = (
-                            self._extract_logprobs(event, "output_token_logprobs") or last_output_logprobs
-                        )
-                        last_input_logprobs = (
-                            self._extract_logprobs(event, "input_token_logprobs") or last_input_logprobs
-                        )
-                        last_meta = event.get("meta_info") or last_meta
+                last_output_ids = event.get("output_ids") or last_output_ids
+                last_output_logprobs = self._extract_logprobs(event, "output_token_logprobs") or last_output_logprobs
+                last_input_logprobs = self._extract_logprobs(event, "input_token_logprobs") or last_input_logprobs
+                last_meta = event.get("meta_info") or last_meta
 
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
-            error_text = e.response.text.lower()
-            logger.warning(f"SGLang threw error (status={status}): {error_text}")
-
-            # Check for context length exceeded (similar to OpenAI's e.code == "context_length_exceeded")
-            if status == 400 and ("exceed" in error_text and "length" in error_text):
-                raise ContextWindowOverflowException(str(e)) from e
+            error_text = e.response.text
+            # Context length exceeded
+            if status == 400 and ("exceed" in error_text.lower() and "length" in error_text.lower()):
+                raise ContextWindowOverflowException(f"Context length exceeded: {error_text}") from e
             # Rate limiting / service unavailable
             if status in (429, 503):
-                raise ModelThrottledException(str(e)) from e
-            # Re-raise other errors
-            raise
+                raise ModelThrottledException(f"Service throttled (status={status}): {error_text}") from e
+            raise  # Re-raise other HTTP errors
+        finally:
+            if ephemeral_client:
+                await client.close()
 
         # Update TITO trajectory
         if new_input_tokens:
