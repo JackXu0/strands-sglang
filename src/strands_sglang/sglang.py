@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -89,13 +90,14 @@ class SGLangModel(Model):
         base_url: str  # SGLang server URL (default: http://localhost:8000)
         model_id: str | None  # Optional model identifier
         params: dict[str, Any] | None  # Default sampling parameters
-        timeout: float | tuple[float, float] | None  # Request timeout in seconds
+        timeout: float | None  # Request timeout in seconds (default: 600s like OpenAI)
         return_logprobs: bool  # Return logprobs for all tokens (default: True)
 
     def __init__(
         self,
         tokenizer: PreTrainedTokenizerBase,
         tool_call_parser: ToolCallParser | None = None,
+        client: httpx.AsyncClient | None = None,
         **model_config: Unpack[SGLangConfig],
     ) -> None:
         """Initialize SGLang model provider.
@@ -103,15 +105,23 @@ class SGLangModel(Model):
         Args:
             tokenizer: HuggingFace tokenizer for chat template and tokenization.
             tool_call_parser: Parser for tool calls (default: HermesToolCallParser).
+            client: Optional shared httpx.AsyncClient for connection pooling.
+                    If provided, it will be reused across requests (efficient for
+                    high-concurrency training within a single event loop).
+                    If None, a new client is created per request.
             **model_config: See SGLangConfig for available options.
         """
         self.tokenizer = tokenizer
         self.tool_call_parser = tool_call_parser or HermesToolCallParser()
 
-        # Setup HTTP client
+        # HTTP client setup
         base_url = str(model_config.get("base_url") or "http://localhost:8000").rstrip("/")
-        timeout = model_config.get("timeout") or 300.0
-        self.client = httpx.AsyncClient(base_url=base_url, timeout=httpx.Timeout(timeout))
+        timeout = model_config.get("timeout") or 600.0  # Default 10min like OpenAI
+        self._client_config = {
+            "base_url": base_url,
+            "timeout": httpx.Timeout(timeout, connect=5.0),
+        }
+        self._shared_client = client  # None = create per-request
 
         # Store config
         self.config = dict(model_config)
@@ -123,6 +133,15 @@ class SGLangModel(Model):
         self._current_tools: list[dict] | None = None
 
         logger.debug(f"initialized with config: {self.config}")
+
+    @asynccontextmanager
+    async def _get_client(self) -> AsyncGenerator[httpx.AsyncClient, None]:
+        """Get HTTP client - shared if provided, otherwise create per-request."""
+        if self._shared_client is not None:
+            yield self._shared_client
+        else:
+            async with httpx.AsyncClient(**self._client_config) as client:
+                yield client
 
     def reset(self) -> None:
         """Reset token accumulation for a new episode.
@@ -399,25 +418,26 @@ class SGLangModel(Model):
         last_meta: dict[str, Any] | None = None
 
         try:
-            async with self.client.stream("POST", "/generate", json=payload) as resp:
-                resp.raise_for_status()
+            async with self._get_client() as client:
+                async with client.stream("POST", "/generate", json=payload) as resp:
+                    resp.raise_for_status()
 
-                async for event in self._iter_sse_events(resp):
-                    # Stream text delta (SGLang returns cumulative text)
-                    new_text = event.get("text")
-                    if isinstance(new_text, str):
-                        delta = new_text[len(prev_text) :] if new_text.startswith(prev_text) else new_text
-                        prev_text = new_text
-                        if delta:
-                            yield {"contentBlockDelta": {"delta": {"text": delta}}}
+                    async for event in self._iter_sse_events(resp):
+                        new_text = event.get("text")
+                        if isinstance(new_text, str):
+                            delta = new_text[len(prev_text) :] if new_text.startswith(prev_text) else new_text
+                            prev_text = new_text
+                            if delta:
+                                yield {"contentBlockDelta": {"delta": {"text": delta}}}
 
-                    # Capture output_ids, logprobs, and metadata
-                    last_output_ids = event.get("output_ids") or last_output_ids
-                    last_output_logprobs = (
-                        self._extract_logprobs(event, "output_token_logprobs") or last_output_logprobs
-                    )
-                    last_input_logprobs = self._extract_logprobs(event, "input_token_logprobs") or last_input_logprobs
-                    last_meta = event.get("meta_info") or last_meta
+                        last_output_ids = event.get("output_ids") or last_output_ids
+                        last_output_logprobs = (
+                            self._extract_logprobs(event, "output_token_logprobs") or last_output_logprobs
+                        )
+                        last_input_logprobs = (
+                            self._extract_logprobs(event, "input_token_logprobs") or last_input_logprobs
+                        )
+                        last_meta = event.get("meta_info") or last_meta
 
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
