@@ -35,7 +35,7 @@ Start an SGLang server first:
 ```bash
 python -m sglang.launch_server \
     --model-path Qwen/Qwen3-4B-Thinking-2507 \
-    --port 8000 \
+    --port 30000 \
     --host 0.0.0.0 \
     --tp-size 8 \
     --mem-fraction-static 0.7
@@ -75,7 +75,7 @@ pytest --help | grep sglang
 
 # Configure via CLI
 pytest tests/integration/ \
-    --sglang-base-url=http://localhost:8000 \
+    --sglang-base-url=http://localhost:30000 \
     --sglang-model-id=Qwen3-4B-Thinking-2507
 ```
 
@@ -83,7 +83,7 @@ pytest tests/integration/ \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SGLANG_BASE_URL` | `http://localhost:8000` | SGLang server URL |
+| `SGLANG_BASE_URL` | `http://localhost:30000` | SGLang server URL |
 | `SGLANG_MODEL_ID` | `Qwen/Qwen3-4B-Instruct-2507` | Model ID |
 
 ```bash
