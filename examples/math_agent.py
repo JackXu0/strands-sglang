@@ -8,7 +8,7 @@ This example demonstrates:
 4. Accessing TITO data (tokens, masks, logprobs) for RL training
 
 Requirements:
-    - SGLang server running: python -m sglang.launch_server --model-path Qwen/Qwen3-4B-Thinking-2507 --port 8000
+    - SGLang server running: python -m sglang.launch_server --model-path Qwen/Qwen3-4B-Thinking-2507 --port 30000
 
 Usage:
     python examples/math_agent.py
@@ -33,7 +33,7 @@ async def main():
 
     # Load tokenizer (must match the model running on SGLang server)
     model_id = os.environ.get("SGLANG_MODEL_ID", "Qwen/Qwen3-4B-Thinking-2507")
-    base_url = os.environ.get("SGLANG_BASE_URL", "http://localhost:8000")
+    base_url = os.environ.get("SGLANG_BASE_URL", "http://localhost:30000")
 
     print(f"Loading tokenizer: {model_id}")
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)

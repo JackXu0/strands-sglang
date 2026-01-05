@@ -9,20 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`create_client` Helper** (`client.py`): New helper function for creating `httpx.AsyncClient` with connection pool limits aligned with OpenAI's defaults. Prevents `PoolTimeout` errors in high-concurrency workloads.
+- **`SGLangClient` Class** (`client.py`): High-level async HTTP client for SGLang server, aligned with [SLIME's http_utils.py](https://github.com/THUDM/slime/blob/main/slime/utils/http_utils.py) for RL training stability:
+  - Connection pooling (default 1000 max connections)
+  - Aggressive retry: 60 attempts with 1s delay (like SLIME)
+  - Retries on transient errors: connection errors + HTTP 500/502/503/504
+  - Infinite timeout by default for long generations (`timeout=None`)
+  - Server-Sent Events (SSE) parsing for streaming responses
 
   ```python
-  from strands_sglang import SGLangModel, create_client
+  from strands_sglang import SGLangClient, SGLangModel
 
-  client = create_client("http://localhost:8000", max_connections=512)
+  client = SGLangClient("http://localhost:30000", max_connections=512)
   model = SGLangModel(tokenizer=tokenizer, client=client)
   ```
 
-- **Shared HTTP Client Support**: Accept optional `client` parameter for connection pooling in high-concurrency scenarios. When running many concurrent requests (e.g., 256 samples per batch in RL training), sharing an `httpx.AsyncClient` significantly reduces connection overhead.
-
 ### Changed
 
-- **Timeout Defaults Aligned with OpenAI**: Default timeout is now 600s (10 minutes) with 5s connect timeout, matching OpenAI client behavior for long-running generations.
+- **`SGLangModel` Now Uses `SGLangClient`**: The model uses `SGLangClient` for HTTP communication, providing retry logic and better error handling.
 - **Improved Error Handling**: SGLang HTTP errors now properly raise `ContextWindowOverflowException` for context length errors and `ModelThrottledException` for rate limiting (429/503).
 
 ### Fixed

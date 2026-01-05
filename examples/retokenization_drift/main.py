@@ -12,7 +12,7 @@ uses a complex problem with extended thinking to increase the chance of triggeri
 drift. Even if no drift occurs, TITO is still valuable for capturing exact tokens.
 
 Requirements:
-    python -m sglang.launch_server --model-path Qwen/Qwen3-4B-Thinking-2507 --port 8000
+    python -m sglang.launch_server --model-path Qwen/Qwen3-4B-Thinking-2507 --port 30000
 
 Usage:
     python examples/retokenization_drift/main.py
@@ -41,7 +41,7 @@ def find_drift_index(original: list[int], re_encoded: list[int]) -> int | None:
 
 async def main():
     model_id = os.environ.get("SGLANG_MODEL_ID", "Qwen/Qwen3-4B-Thinking-2507")
-    base_url = os.environ.get("SGLANG_BASE_URL", "http://localhost:8000")
+    base_url = os.environ.get("SGLANG_BASE_URL", "http://localhost:30000")
 
     print(f"Model: {model_id}")
     print(f"Server: {base_url}\n")

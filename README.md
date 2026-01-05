@@ -37,7 +37,7 @@ pip install -e ".[dev]"
 ```bash
 python -m sglang.launch_server \
     --model-path Qwen/Qwen3-4B-Thinking-2507 \
-    --port 8000 \
+    --port 30000 \
     --host 0.0.0.0
 ```
 
@@ -57,7 +57,7 @@ async def main():
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507")
     model = SGLangModel(
         tokenizer=tokenizer,
-        base_url="http://localhost:8000",
+        base_url="http://localhost:30000",
         model_id="Qwen/Qwen3-4B-Thinking-2507",
         params={
             "max_new_tokens": 10240,
@@ -117,7 +117,7 @@ A concrete example at Slime's repository will be available later.
 ```python
 model = SGLangModel(
     tokenizer=tokenizer,           # Required: HuggingFace tokenizer
-    base_url="http://localhost:8000",  # SGLang server URL
+    base_url="http://localhost:30000",  # SGLang server URL
     model_id="Qwen/Qwen3-4B-Thinking-2507",  # Optional: model identifier
     tool_call_parser=HermesToolCallParser(),  # Tool call format parser
     client=None,                    # Optional: shared httpx.AsyncClient
@@ -131,26 +131,31 @@ model = SGLangModel(
 )
 ```
 
-### Shared Client for High Concurrency
+### SGLangClient for High Concurrency
 
-For high-concurrency workloads, use `create_client` to create a properly configured `httpx.AsyncClient`:
+For high-concurrency RL training, use `SGLangClient` which provides connection pooling, aggressive retry on transient errors, and SSE parsing. Defaults are aligned with [SLIME's http_utils.py](https://github.com/THUDM/slime/blob/main/slime/utils/http_utils.py):
 
 ```python
-from strands_sglang import SGLangModel, create_client
+from strands_sglang import SGLangClient, SGLangModel
 
-# Create shared client with connection pool sized for your concurrency
-client = create_client("http://localhost:8000", max_connections=512)
+# Create shared client (defaults tuned for RL training)
+client = SGLangClient(
+    "http://localhost:30000",
+    max_connections=512,      # Connection pool size (default: 1000)
+    timeout=None,             # Infinite timeout for long generations (default: None)
+    max_retries=60,           # Aggressive retry on transient errors (default: 60)
+    retry_delay=1.0,          # Fixed delay between retries (default: 1.0s)
+)
 
 # Reuse across all concurrent requests
 model = SGLangModel(tokenizer=tokenizer, client=client)
 ```
 
-Parameters:
-- `max_connections`: Maximum concurrent connections (default: 1000, aligned with OpenAI)
-- `max_keepalive_connections`: Idle connections kept warm (default: `max_connections // 10`)
-- `timeout`: Request timeout in seconds (default: 600s)
+The client automatically retries on:
+- Connection errors (`ConnectError`, `PoolTimeout`, `ReadTimeout`)
+- Transient server errors (HTTP 500, 502, 503, 504)
 
-> Tip: Without proper connection limits, you may encounter `PoolTimeout` errors when the default 100-connection pool is exhausted.
+> Tip: Without `SGLangClient`, you may encounter `PoolTimeout` errors when the default 100-connection pool is exhausted.
 
 > See more sampling params options at SGLang's [documentation](https://docs.sglang.io/basic_usage/sampling_params.html).
 
@@ -168,18 +173,18 @@ Requires a running SGLang server:
 
 ```bash
 # Start server first
-python -m sglang.launch_server --model-path Qwen/Qwen3-4B-Thinking-2507 --port 8000
+python -m sglang.launch_server --model-path Qwen/Qwen3-4B-Thinking-2507 --port 30000
 
 # Run tests
 pytest tests/integration/ -v \
-    --sglang-base-url=http://localhost:8000 \
+    --sglang-base-url=http://localhost:30000 \
     --sglang-model-id=Qwen/Qwen3-4B-Thinking-2507
 ```
 
 Or configure via environment variables:
 
 ```bash
-export SGLANG_BASE_URL=http://localhost:8000
+export SGLANG_BASE_URL=http://localhost:30000
 export SGLANG_MODEL_ID=Qwen/Qwen3-4B-Thinking-2507
 pytest tests/integration/ -v
 ```
