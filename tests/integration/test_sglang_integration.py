@@ -190,21 +190,22 @@ class TestTITO:
 
 
 class TestSSEParsing:
-    """Tests for SSE event parsing."""
+    """Tests for SSE event parsing via SGLangClient."""
 
-    async def test_iter_sse_events(self, model):
-        """_iter_sse_events correctly parses SSE stream."""
+    async def test_client_generate_parses_sse(self, model):
+        """SGLangClient.generate() correctly parses SSE stream."""
         messages = [{"role": "user", "content": [{"text": "Say 'test'"}]}]
 
-        # Manually call the internal stream to test SSE parsing
+        # Tokenize and call client.generate() directly
         input_ids = model.tokenize_prompt_messages(messages, system_prompt=None)
-        payload = model.build_sglang_payload(input_ids=input_ids)
+        client = model._get_client()
 
-        async with model.client.stream("POST", "/generate", json=payload) as response:
-            events = []
-            async for event in model._iter_sse_events(response):
-                events.append(event)
+        events = []
+        async for event in client.generate(input_ids=input_ids):
+            events.append(event)
 
-        # Should have parsed JSON events
+        # Should have parsed JSON events with expected fields
         assert len(events) > 0
         assert all(isinstance(e, dict) for e in events)
+        # Final event should have output_ids
+        assert "output_ids" in events[-1] or "text" in events[-1]

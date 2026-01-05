@@ -24,11 +24,11 @@ Running Tests:
     pytest tests/                         # All tests
 
 Configuration:
-    pytest tests/integration/ --sglang-base-url=http://localhost:8000
+    pytest tests/integration/ --sglang-base-url=http://localhost:30000
     pytest tests/integration/ --sglang-model-id=Qwen/Qwen3-4B-Instruct-2507
 
     Or via environment variables:
-    SGLANG_BASE_URL=http://localhost:8000 pytest tests/integration/
+    SGLANG_BASE_URL=http://localhost:30000 pytest tests/integration/
 """
 
 import os
@@ -39,8 +39,8 @@ def pytest_addoption(parser):
     parser.addoption(
         "--sglang-base-url",
         action="store",
-        default=os.environ.get("SGLANG_BASE_URL", "http://localhost:8000"),
-        help="SGLang server URL (default: http://localhost:8000 or SGLANG_BASE_URL env var)",
+        default=os.environ.get("SGLANG_BASE_URL", "http://localhost:30000"),
+        help="SGLang server URL (default: http://localhost:30000 or SGLANG_BASE_URL env var)",
     )
     parser.addoption(
         "--sglang-model-id",

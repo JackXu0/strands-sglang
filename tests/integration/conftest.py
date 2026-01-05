@@ -18,7 +18,7 @@ All tests in this directory are automatically marked as integration tests
 and require a running SGLang server.
 
 Configuration (priority: CLI > env var > default):
-    pytest --sglang-base-url=http://localhost:8000 --sglang-model-id=Qwen/Qwen3-4B-Instruct-2507
+    pytest --sglang-base-url=http://localhost:30000 --sglang-model-id=Qwen/Qwen3-4B-Instruct-2507
     SGLANG_BASE_URL=http://... SGLANG_MODEL_ID=... pytest tests/integration/
 """
 

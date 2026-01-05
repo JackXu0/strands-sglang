@@ -119,46 +119,6 @@ class TestFormatPrompt:
         assert call_kwargs["tokenize"] is False
 
 
-class TestBuildSglangPayload:
-    """Tests for build_sglang_payload method."""
-
-    def test_minimal_payload(self, model):
-        """Build payload with minimal parameters."""
-        payload = model.build_sglang_payload(input_ids=[1, 2, 3])
-
-        assert payload["input_ids"] == [1, 2, 3]
-        assert payload["stream"] is True
-        assert payload["return_logprob"] is True
-        assert payload["logprob_start_len"] == 0
-
-    def test_payload_with_sampling_params(self, model):
-        """Build payload with sampling parameters."""
-        sampling = {"temperature": 0.7, "max_tokens": 100}
-        payload = model.build_sglang_payload(input_ids=[1, 2, 3], sampling_params=sampling)
-
-        assert payload["sampling_params"] == sampling
-
-    def test_payload_without_logprobs(self, model):
-        """Build payload without logprobs."""
-        payload = model.build_sglang_payload(input_ids=[1, 2, 3], return_logprob=False)
-
-        assert "return_logprob" not in payload
-        assert "logprob_start_len" not in payload
-
-    def test_payload_without_streaming(self, model):
-        """Build payload without streaming."""
-        payload = model.build_sglang_payload(input_ids=[1, 2, 3], stream=False)
-
-        assert payload["stream"] is False
-
-    def test_payload_with_model_id(self, mock_tokenizer):
-        """Build payload with model ID from config."""
-        model = SGLangModel(tokenizer=mock_tokenizer, model_id="qwen/qwen3-4b")
-        payload = model.build_sglang_payload(input_ids=[1, 2, 3])
-
-        assert payload["model"] == "qwen/qwen3-4b"
-
-
 class TestTokenizePromptMessages:
     """Tests for tokenize_prompt_messages method."""
 
@@ -336,7 +296,7 @@ class TestConfig:
         model = SGLangModel(tokenizer=mock_tokenizer)
         config = model.get_config()
 
-        assert config["base_url"] == "http://localhost:8000"
+        assert config["base_url"] == "http://localhost:30000"
 
     def test_custom_base_url(self, mock_tokenizer):
         """Custom base URL is stored correctly."""
@@ -354,15 +314,11 @@ class TestConfig:
         assert config["model_id"] == "new-model"
 
     def test_config_with_timeout_float(self, mock_tokenizer):
-        """Configuration with timeout float (connect is always 5.0 like OpenAI)."""
+        """Configuration with custom timeout."""
         model = SGLangModel(tokenizer=mock_tokenizer, timeout=300.0)
-        timeout = model._client_config["timeout"]
-        assert timeout.connect == 5.0  # Fixed like OpenAI
-        assert timeout.read == 300.0
+        assert model._timeout == 300.0
 
     def test_config_with_default_timeout(self, mock_tokenizer):
-        """Configuration with default timeout (600s like OpenAI)."""
+        """Configuration with default timeout (None = infinite, like SLIME)."""
         model = SGLangModel(tokenizer=mock_tokenizer)
-        timeout = model._client_config["timeout"]
-        assert timeout.connect == 5.0
-        assert timeout.read == 600.0  # Default 10min like OpenAI
+        assert model._timeout is None  # Infinite timeout by default
