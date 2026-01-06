@@ -5,7 +5,7 @@ SGLang model provider for [Strands Agents SDK](https://github.com/strands-agents
 ## Features
 
 - **SGLang Native API**: Uses SGLang's native `/generate` endpoint for efficient token-level generation
-- **TITO Support**: Tracks complete token trajectories with logprobs for RL training - no retokenization drift (see [examples/retokenization_drift/](examples/retokenization_drift/))
+- **TITO Support**: Tracks complete token trajectories with logprobs for RL training - no retokenization drift
 - **Tool Call Parsing**: Customizable tool parsing aligned with model chat templates (Hermes/Qwen format)
 - **Iteration Limiting**: Built-in hook to limit tool iterations with clean trajectory truncation
 
@@ -36,14 +36,12 @@ pip install -e ".[dev]"
 
 ```bash
 python -m sglang.launch_server \
-    --model-path Qwen/Qwen3-4B-Thinking-2507 \
+    --model-path Qwen/Qwen3-4B-Instruct-2507 \
     --port 30000 \
     --host 0.0.0.0
 ```
 
-> Tips: There's no need to load SGLang's tool parser because this is for training
-
-### 2. Basic Agent Usage
+### 2. Basic Agent
 
 ```python
 import asyncio
@@ -53,156 +51,92 @@ from strands_tools import calculator
 from strands_sglang import SGLangModel
 
 async def main():
-    # Initialize model with tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507")
-    model = SGLangModel(
-        tokenizer=tokenizer,
-        base_url="http://localhost:30000",
-        model_id="Qwen/Qwen3-4B-Thinking-2507",
-        params={
-            "max_new_tokens": 10240,
-        },
-    )
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
+    model = SGLangModel(tokenizer=tokenizer, base_url="http://localhost:30000")
+    agent = Agent(model=model, tools=[calculator])
 
-    # Create agent with tools
-    agent = Agent(
-        model=model,
-        tools=[calculator],
-        system_prompt="You are a helpful math assistant. Use the calculator for all arithmetic.",
-    )
-
-    # Run episode
     model.reset()  # Reset TITO state for new episode
     result = await agent.invoke_async("What is 25 * 17?")
     print(result)
 
     # Access TITO data for RL training
-    print(f"Trajectory: {len(model.token_manager)} tokens")
-    print(f"Output tokens: {sum(model.token_manager.loss_mask)}")
+    print(f"Tokens: {model.token_manager.token_ids}")
+    print(f"Loss mask: {model.token_manager.loss_mask}")
+    print(f"Logprobs: {model.token_manager.logprobs}")
 
 asyncio.run(main())
 ```
 
-## RL Training with Slime
+## Slime Training
 
-For RL training with [Slime](https://github.com/THUDM/slime/), run async rollout:
+For RL training with [Slime](https://github.com/THUDM/slime/), `SGLangModel` with TITO eliminates the retokenization step in [`generate_with_strands.py`](https://github.com/THUDM/slime/blob/main/examples/strands-agents/generate_with_strands.py) (this example is not fully ready yet):
 
 ```python
+from strands import Agent
+from strands_sglang import SGLangClient, SGLangModel, ToolIterationLimiter
+from slime.utils.types import Sample
+
+SYSTEM_PROMPT = "..."  # Your system prompt
+
 async def generate(args, sample: Sample, sampling_params) -> Sample:
     ...
-    # The whole agent loop logic in a few lines
-    url = f"http://{args.sglang_router_ip}:{args.sglang_router_port}"
-    model = SGLangModel(tokenizer=tokenizer, base_url=url)
-    limiter = ToolIterationLimiter(max_iterations=5)  # Optional: control maximum tool iteration
-    agent = Agent(model=model, tools=[calculator], hooks[limiter], system_prompt="...")
+    state = GenerateState(args)
+
+    # Create client and model with TITO tracking
+    client = SGLangClient.from_slime_args(args)
+    model = SGLangModel(
+        tokenizer=state.tokenizer,
+        client=client,
+        params={"max_new_tokens": sampling_params["max_new_tokens"], ...},
+    )
+    agent = Agent(
+        model=model,
+        tools=[...],  # Your tools
+        hooks=[ToolIterationLimiter(max_iterations=...)],
+        system_prompt=SYSTEM_PROMPT,
+    )
+
+    # Run agent
+    model.reset()
     try:
         await agent.invoke_async(sample.prompt)
         sample.status = Sample.Status.COMPLETED
     except Exception as e:
-        # Use exception to determine TRUNCATED or ABORTED
-        ...
-    # Use model.token_manager to fill in sample's attributes
+        # Define what truncation exceptions look like
+        if _is_truncation_error(e):
+            sample.status = Sample.Status.TRUNCATED
+        else:
+            sample.status = Sample.Status.ABORTED
+
+    # TITO: No retokenization needed - tokens tracked during generation
     sample.tokens = model.token_manager.token_ids
     sample.loss_mask = model.token_manager.loss_mask
     sample.rollout_log_probs = model.token_manager.logprobs
+    sample.response_length = sum(sample.loss_mask)
     ...
+
+    return sample
 ```
-
-A concrete example at Slime's repository will be available later.
-
-## Configuration
-
-### SGLangModel Options
-
-```python
-model = SGLangModel(
-    tokenizer=tokenizer,           # Required: HuggingFace tokenizer
-    base_url="http://localhost:30000",  # SGLang server URL
-    model_id="Qwen/Qwen3-4B-Thinking-2507",  # Optional: model identifier
-    tool_call_parser=HermesToolCallParser(),  # Tool call format parser
-    client=None,                    # Optional: shared httpx.AsyncClient
-    params={                        # Sampling parameters
-        "max_new_tokens": 10240,
-        "temperature": 0.7,
-        "top_p": 0.9,
-    },
-    timeout=600.0,                  # Request timeout (default: 600s like OpenAI)
-    return_logprobs=True,           # Return logprobs (default: True)
-)
-```
-
-### SGLangClient for High Concurrency
-
-For high-concurrency RL training, use `SGLangClient` which provides connection pooling, aggressive retry on transient errors, and SSE parsing. Defaults are aligned with [SLIME's http_utils.py](https://github.com/THUDM/slime/blob/main/slime/utils/http_utils.py):
-
-```python
-from strands_sglang import SGLangClient, SGLangModel
-
-# Create shared client (defaults tuned for RL training)
-client = SGLangClient(
-    "http://localhost:30000",
-    max_connections=512,      # Connection pool size (default: 1000)
-    timeout=None,             # Infinite timeout for long generations (default: None)
-    max_retries=60,           # Aggressive retry on transient errors (default: 60)
-    retry_delay=1.0,          # Fixed delay between retries (default: 1.0s)
-)
-
-# Reuse across all concurrent requests
-model = SGLangModel(tokenizer=tokenizer, client=client)
-```
-
-The client automatically retries on:
-- Connection errors (`ConnectError`, `PoolTimeout`, `ReadTimeout`)
-- Transient server errors (HTTP 500, 502, 503, 504)
-
-> Tip: Without `SGLangClient`, you may encounter `PoolTimeout` errors when the default 100-connection pool is exhausted.
-
-> See more sampling params options at SGLang's [documentation](https://docs.sglang.io/basic_usage/sampling_params.html).
 
 ## Testing
 
-### Unit Tests
-
 ```bash
+# Unit tests
 pytest tests/unit/ -v
-```
 
-### Integration Tests
-
-Requires a running SGLang server:
-
-```bash
-# Start server first
-python -m sglang.launch_server --model-path Qwen/Qwen3-4B-Thinking-2507 --port 30000
-
-# Run tests
-pytest tests/integration/ -v \
-    --sglang-base-url=http://localhost:30000 \
-    --sglang-model-id=Qwen/Qwen3-4B-Thinking-2507
-```
-
-Or configure via environment variables:
-
-```bash
-export SGLANG_BASE_URL=http://localhost:30000
-export SGLANG_MODEL_ID=Qwen/Qwen3-4B-Thinking-2507
-pytest tests/integration/ -v
+# Integration tests (requires SGLang server)
+pytest tests/integration/ -v --sglang-base-url=http://localhost:30000
 ```
 
 ## Contributing
 
-We warmly welcome contributions! Whether it's new features, performance tuning, or UX feedback, feel free to start a discussion with an issue or jump straight to a PR 😊
-
-Use `pre-commit` to ensure code style consistency for your commits:
+Contributions welcome! Use `pre-commit` for code style:
 
 ```bash
 pip install -e ".[dev]"
 pre-commit install
-pre-commit run --all-files --show-diff-on-failure --color=always
 ```
-
-Now `git commit` will auto-run linting and formatting checks.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 - see [LICENSE](LICENSE).

@@ -9,30 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`SGLangClient` Class** (`client.py`): High-level async HTTP client for SGLang server, aligned with [SLIME's http_utils.py](https://github.com/THUDM/slime/blob/main/slime/utils/http_utils.py) for RL training stability:
+- **`SGLangClient` Class** (`client.py`): High-level async HTTP client for SGLang server, aligned with [Slime's http_utils.py](https://github.com/THUDM/slime/blob/main/slime/utils/http_utils.py) for RL training stability:
   - Connection pooling (default 1000 max connections)
-  - Aggressive retry: 60 attempts with 1s delay (like SLIME)
-  - Retries on transient errors: connection errors + HTTP 500/502/503/504
+  - Aggressive retry: 60 attempts with 1s delay (like Slime)
   - Infinite timeout by default for long generations (`timeout=None`)
   - Server-Sent Events (SSE) parsing for streaming responses
 
-  ```python
-  from strands_sglang import SGLangClient, SGLangModel
+- **`SGLangClient.from_slime_args()` Factory Method**: Create client directly from Slime training args with auto-computed `max_connections`:
 
-  client = SGLangClient("http://localhost:30000", max_connections=512)
+  ```python
+  client = SGLangClient.from_slime_args(args)
   model = SGLangModel(tokenizer=tokenizer, client=client)
   ```
 
+- **Slime-Aligned Retry Logic**: Aggressive retry on most errors (blacklist approach):
+  - Retries all 5xx server errors
+  - Retries 408 (Request Timeout) and 429 (Rate Limit) per OpenAI best practices
+  - Retries connection errors (`ConnectError`, `PoolTimeout`, `ReadTimeout`)
+  - Only non-retryable: permanent client errors (400, 401, 403, 404, 422, etc.)
+
 ### Changed
 
+- **Default Port**: Changed from 8000 to 30000 to match SGLang's default.
 - **`SGLangModel` Now Uses `SGLangClient`**: The model uses `SGLangClient` for HTTP communication, providing retry logic and better error handling.
 - **Improved Error Handling**: SGLang HTTP errors now properly raise `ContextWindowOverflowException` for context length errors and `ModelThrottledException` for rate limiting (429/503).
 
 ### Fixed
 
 - Default `max_new_tokens` increased for thinking models that require longer outputs.
-- Documentation: Added `strands-agents-tools` to pip installation path.
-- Documentation: Added connection pool `limits` example to prevent `PoolTimeout` errors in high-concurrency scenarios.
 
 ## [0.0.1] - 2026-01-03
 
