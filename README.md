@@ -109,10 +109,12 @@ async def generate(args, sample: Sample, sampling_params) -> Sample:
             sample.status = Sample.Status.ABORTED
 
     # TITO: No retokenization needed - tokens tracked during generation
+    prompt_len = len(model.token_manager.segments[0])  # system + user are first segment
     sample.tokens = model.token_manager.token_ids
-    sample.loss_mask = model.token_manager.loss_mask
-    sample.rollout_log_probs = model.token_manager.logprobs
-    sample.response_length = sum(sample.loss_mask)
+    sample.loss_mask = model.token_manager.loss_mask[prompt_len:]
+    sample.rollout_log_probs = model.token_manager.logprobs[prompt_len:]
+    sample.response_length = len(sample.tokens) - prompt_len
+    sample.response = model.tokenizer.decode(sample.tokens[prompt_len:], skip_special_tokens=False)
     ...
 
     return sample
