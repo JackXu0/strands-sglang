@@ -48,11 +48,14 @@ class SGLangClient:
 
     Example:
         >>> async with SGLangClient("http://localhost:30000") as client:
-        ...     async for event in client.generate_stream(input_ids=[1, 2, 3]):
+        ...     async for event in client.generate(input_ids=[1, 2, 3]):
         ...         print(event)
 
         >>> # For RL training with infinite timeout (like SLIME):
         >>> client = SGLangClient("http://localhost:30000", timeout=None)
+
+        >>> # From SLIME training args:
+        >>> client = SGLangClient.from_slime_args(args)
     """
 
     def __init__(
@@ -93,11 +96,46 @@ class SGLangClient:
             f"max_connections={max_connections}, timeout={timeout}, max_retries={max_retries}"
         )
 
+    @classmethod
+    def from_slime_args(cls, args: Any, **overrides: Any) -> SGLangClient:
+        """Create SGLangClient from Slime's training args.
+
+        Matches Slime's [`init_http_client`](https://github.com/THUDM/slime/blob/main/slime/utils/http_utils.py) formula:
+
+            max_connections = concurrency * (num_gpus / gpus_per_engine)
+
+        where `num_gpus ÷ gpus_per_engine` is the number of SGLang server instances,
+        and `concurrency` is the max concurrent requests each instance can handle.
+        This ensures enough connections to fully saturate all server instances.
+
+        Args:
+            args: Slime's args namespace with required attributes:
+                - sglang_router_ip: SGLang router IP address
+                - sglang_router_port: SGLang router port
+                - sglang_server_concurrency: Concurrency per SGLang server
+                - rollout_num_gpus: Total GPUs for rollout
+                - rollout_num_gpus_per_engine: GPUs per engine
+            **overrides: Override any configuration values.
+
+        Returns:
+            Configured SGLangClient instance.
+
+        Example:
+            >>> client = SGLangClient.from_slime_args(args)
+            >>> model = SGLangModel(tokenizer=tokenizer, client=client)
+        """
+        return cls(
+            f"http://{args.sglang_router_ip}:{args.sglang_router_port}",
+            # Matches Slime's init_http_client formula
+            max_connections=args.sglang_server_concurrency * args.rollout_num_gpus // args.rollout_num_gpus_per_engine,
+            **overrides,
+        )
+
     async def close(self) -> None:
         """Close the HTTP client and release connections."""
         await self._client.aclose()
 
-    async def __aenter__(self) -> "SGLangClient":
+    async def __aenter__(self) -> SGLangClient:
         """Enter async context manager."""
         return self
 
