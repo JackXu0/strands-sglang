@@ -244,7 +244,7 @@ class SGLangClient:
 
                 # Log and retry
                 response_text = e.response.text if isinstance(e, httpx.HTTPStatusError) else None
-                
+
                 # Use exponential backoff for connection/timeout errors to avoid thundering herd
                 # These errors indicate resource exhaustion - need longer delays with jitter
                 if isinstance(e, (httpx.PoolTimeout, httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError)):
@@ -257,7 +257,7 @@ class SGLangClient:
                     # For other errors, use base delay with small jitter to prevent synchronization
                     jitter = self.retry_delay * 0.1 * (2 * random.random() - 1)  # ±10% jitter
                     delay = max(0.1, self.retry_delay + jitter)
-                
+
                 if attempt < self.max_retries:
                     logger.warning(
                         f"SGLang request failed (attempt {attempt + 1}/{self.max_retries + 1}): "
